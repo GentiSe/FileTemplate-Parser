@@ -1,24 +1,216 @@
 ﻿using CsvHelper;
 using CsvHelper.Configuration;
-using System;
-using System.Collections.Generic;
+using SharpCompress.Archives;
+using SharpCompress.Archives.Rar;
 using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Text.Json.Serialization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using static FileParserv1.NetworkTask;
 
 
 namespace FileParserv1
 {
-
-
     class Program
     {
         static void Main()
         {
-            string filePath = "C:\\Users\\GentritSelimi\\Desktop\\EA1024PR(39).txt";
+            try
+            {
+                Console.WriteLine("Select the process to run:");
+                Console.WriteLine("1. Process Adapter Adac Data");
+                Console.WriteLine("2. Process Poe Network Data");
+                Console.Write("Enter your choice (1 or 2): ");
 
+                var choice = Console.ReadLine();
+
+                Console.WriteLine("Drag and drop the file here and press Enter:");
+
+                string filePath = Console.ReadLine()?.Trim('"');
+
+                if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+                {
+                    Console.WriteLine("Invalid file path. Please restart and enter a valid path.");
+                    return;
+                }
+
+                if (filePath.EndsWith("txt") && choice != "1")
+                {
+                    Console.WriteLine("Wrong choice, for Adapter Adac data must be a .txt file");
+                    return;
+                }
+
+                switch (choice)
+                {
+                    case "1":
+                        ProcessAdacData(filePath);
+                        break;
+                    case "2":
+                        ProcessPoeNetowrkData(filePath);
+                        break;
+                    default:
+                        Console.WriteLine("Invalid choice. Please restart and enter 1 or 2.");
+                        return;
+                }
+
+                Console.WriteLine("Successfully processed the file");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+        public static void ConvertToJsonPoE(List<string> serialNumbers
+            , List<Dictionary<string
+            , List<Dictionary<string, string>>>> allData
+            , List<string> headers
+            , List<Dictionary<string, string>> allSummarysBySn
+            , string filePath
+            )
+        {
+            var list = new List<PowerOverEthernetTask>();
+
+            if (serialNumbers.Count != allSummarysBySn.Count)
+            {
+                Console.WriteLine("SerialNumbers do not match with the data");
+                return;
+            }
+
+            for (int i = 90; i < serialNumbers.Count; i++)
+            {
+                var sn = serialNumbers[i];
+                var data = allData[i];
+                var summaryData = allSummarysBySn[i];
+                var poeTask = new PowerOverEthernetTask()
+                {
+                    SerialNumber = sn,
+                    SummaryData = summaryData,
+                    HasPassed = summaryData.ElementAt(5).Value == "Pass",
+                };
+                foreach (var item in data)
+                {
+                    var values = item.Value.SelectMany(x => x.Values).ToList();
+                    var networkTask = new NetworkTask
+                    {
+                        Name = item.Key
+                    };
+                    var taskSections = new List<TaskSection>();
+                    for (int k = 0; k < headers.Count; k++)
+                    {
+                        taskSections.Add(new TaskSection
+                        {
+                            Name = headers[k],
+                            Value = values[k],
+                            IsDataSet = decimal.TryParse(values[k], out var res)
+                        });
+                    }
+                    networkTask.TaskSections = taskSections;
+                    poeTask.NetworkTasks.Add(networkTask);
+                }
+                list.Add(poeTask);
+            }
+
+            var serialized = JsonSerializer.Serialize(list);
+
+            string directory = Path.GetDirectoryName(filePath) ?? Directory.GetCurrentDirectory();
+
+            var fileName = Path.GetFileNameWithoutExtension(filePath);
+
+            string outputFilePath = Path.Combine(directory, $"{fileName}.txt");
+
+            File.WriteAllText(outputFilePath, serialized);
+        }
+
+
+        public static void WriteToCsv(List<string> serialNumbers
+            , List<string> timeStamps
+            , Dictionary<string
+            , List<string>> data
+            , List<string> headers
+            , Dictionary<string, string> testStatuses
+            , string filePath)
+        {
+            var config = new CsvConfiguration(cultureInfo: CultureInfo.InvariantCulture)
+            {
+                Delimiter = ";",
+                HasHeaderRecord = false
+            };
+
+            string directory = Path.GetDirectoryName(filePath) ?? Directory.GetCurrentDirectory();
+
+            var fileName = Path.GetFileNameWithoutExtension(filePath);
+
+            string outputFilePath = Path.Combine(directory, $"{fileName}.csv");
+
+            using var writer = new StreamWriter(outputFilePath);
+            using var csv = new CsvWriter(writer, config);
+
+            // Skip to row 3 (as row 1 and 2 are empty)
+            for (int i = 0; i < 3; i++) // Start counting from 0, so skip 2 rows for row 3
+            {
+                csv.NextRecord();
+            }
+
+            csv.WriteField("SerialNumber");
+            csv.WriteField("IsPass");
+            csv.WriteField("StartDate");
+
+            foreach (var header in headers)
+            {
+                csv.WriteField(header);
+            }
+            csv.NextRecord();
+
+            // Skip to row 4 for writing serial numbers (no more need for row skips since we're already there)
+            // Write serial numbers starting from column 1 (row 4 onward)
+
+            for (int i = 0; i < serialNumbers.Count; i++)
+            {
+                var sn = serialNumbers[i];
+                var dictData = data[sn];
+                var testStatus = testStatuses[sn];
+                var timeStamp = timeStamps[i];
+
+                csv.WriteField(sn);
+
+                for (int j = 0; j < 2; j++)
+                {
+                    if (j == 0)
+                    {
+                        csv.WriteField(testStatus);
+                    }
+                    if (j == 1)
+                    {
+                        csv.WriteField(timeStamp);
+                    }
+                }
+
+                foreach (var d in dictData)
+                {
+                    csv.WriteField(d);
+                }
+                csv.NextRecord();
+            }
+
+            // Now, write dictionary data horizontally starting from row 6, column 4
+            for (int i = 0; i < 2; i++) // Skip 2 more rows to get to row 6
+            {
+                csv.NextRecord();
+            }
+
+        }
+        static string ExtractValue(string line, string key)
+        {
+            int startIndex = line.IndexOf(key) + key.Length;
+            if (startIndex >= key.Length)
+            {
+                return line.Substring(startIndex).Trim();
+            }
+            return string.Empty;
+        }
+
+
+        static void ProcessAdacData(string filePath)
+        {
             string[] lines = File.ReadAllLines(filePath);
 
             // Dictionary to store headers and their values
@@ -26,8 +218,11 @@ namespace FileParserv1
             var generalInfo = new Dictionary<string, string>();
 
             var isFirstSequence = true;
-            bool isSecSeq, isThirdSeq, isFourthSeq, isFifthSeq, isSixSeq, isSevenSeq, isEightSeq, isNineSeq, isTenSeq, isElevenSeq;
-            isSecSeq = isThirdSeq = isFourthSeq = isFifthSeq = isSixSeq = isSevenSeq = isEightSeq = isNineSeq = isTenSeq = isElevenSeq = false;
+            bool isSecSeq = false, isThirdSeq = false, isFourthSeq = false, isFifthSeq = false, isSixSeq = false, isSevenSeq = false, isEightSeq = false,
+                isNineSeq = false, isTenSeq = false, isElevenSeq = false;
+
+            bool firstSeqPassed = false;
+            bool secSeqPassed = false;
 
             var serialNumbers = new List<string>();
             var modelNames = new List<string>();
@@ -58,7 +253,7 @@ namespace FileParserv1
                     serialNumbers.Add(generalInfo["Serial No"]);
                     modelNames.Add(generalInfo["Model Name"]);
                     timeStamps.Add(generalInfo["YYYY_MM_DD"]);
-                    
+
                 }
             }
             var testPassed = false;
@@ -110,13 +305,13 @@ namespace FileParserv1
                     isFifthSeq = true;
                 }
 
-                else if(cleanLine.Contains("SEQ.6:"))
+                else if (cleanLine.Contains("SEQ.6:"))
                 {
                     testPassed = cleanLine.Contains("PASS");
                     isSixSeq = true;
                     isFifthSeq = false;
                 }
-                else if(cleanLine.Contains("SEQ.7:"))
+                else if (cleanLine.Contains("SEQ.7:"))
                 {
                     testPassed = cleanLine.Contains("PASS");
                     isSevenSeq = true;
@@ -130,13 +325,13 @@ namespace FileParserv1
                     isEightSeq = true;
                 }
 
-                else if(cleanLine.Contains("SEQ.9:"))
+                else if (cleanLine.Contains("SEQ.9:"))
                 {
                     testPassed = cleanLine.Contains("PASS");
                     isEightSeq = false;
                     isNineSeq = true;
                 }
-                else if(cleanLine.Contains("SEQ.10:"))
+                else if (cleanLine.Contains("SEQ.10:"))
                 {
                     testPassed = cleanLine.Contains("PASS");
                     isNineSeq = false;
@@ -153,7 +348,7 @@ namespace FileParserv1
                 if (isFirstSequence)
                 {
                     // Extract key-value pairs using regex or string split for '=' sign
-                    if (cleanLine.Contains("="))
+                    if (cleanLine.Contains('='))
                     {
                         // Example: Vin Port       =        1      Vin Type        =       AC
                         string[] parts = Regex.Split(cleanLine, @"\s+=\s+|\s{2,}");
@@ -165,6 +360,24 @@ namespace FileParserv1
 
                             // Store in the dictionary or process further
                             seq1Values["Seq1-" + key] = value;
+
+                            var limits = new Dictionary<string, List<string>>
+                            {
+                                { "Seq1-Ton Read", new List<string> { "3000", "1000" } }
+                            };
+
+                            if (limits.TryGetValue("Seq1-" + key, out var val))
+                            {
+                                if (int.TryParse(val[0], out var upperLimit) && int.TryParse(val[1], out var lowerLimit))
+                                {
+                                    // Check if the target value is within the limits
+                                    if (decimal.Parse(value) >= lowerLimit && decimal.Parse(value) <= upperLimit)
+                                    {
+                                        firstSeqPassed = true;
+                                    }
+                                }
+                            }
+
                         }
                     }
 
@@ -215,6 +428,26 @@ namespace FileParserv1
                             for (int i = 0; i < values.Count; i++)
                             {
                                 seq1Values["Seq1-" + keys[i]] = values[i];
+                                var value = values[i];
+                                var key = keys[i];
+
+                                var limits = new Dictionary<string, List<string>>
+                                {
+                                    { "Seq1-Ton Read", new List<string> { "3000", "1000" } }
+                                };
+
+                                if (limits.TryGetValue("Seq1-" + key, out var val))
+                                {
+                                    if (int.TryParse(val[0], out var upperLimit) && int.TryParse(val[1], out var lowerLimit))
+                                    {
+                                        // Check if the target value is within the limits
+                                        if (decimal.Parse(value) >= lowerLimit && decimal.Parse(value) <= upperLimit)
+                                        {
+                                            firstSeqPassed = true;
+                                        }
+                                    }
+                                }
+
                             }
                         }
                         j++;
@@ -280,6 +513,7 @@ namespace FileParserv1
 
                     if ((cleanLine.Contains("Vpp Max") || cleanLine.Contains("Vdc Max")) && lines[j + 1].Contains("1."))
                     {
+                        // here
                         var keys = Regex.Split(cleanLine, @"\s{2,}").ToList();
                         var values = Regex.Split(lines[j + 1], @"\s{2,}").Where(x => !string.IsNullOrEmpty(x)).ToList();
 
@@ -291,6 +525,28 @@ namespace FileParserv1
                             for (int i = 0; i < values.Count; i++)
                             {
                                 seq1Values[$"{seqValue}" + keys[i]] = values[i];
+                                var key = keys[i];
+                                var value = values[i];
+
+                                var limits = new Dictionary<string, List<string>>
+                                {
+                                    { "Seq2-Vpp-3 RD", new List<string> { "0.07", "0.005" } },
+                                    { "Seq2-Vpp-2 RD", new List<string> { "0.07", "0.005" } },
+                                    { "Seq2-Vpp-1 RD", new List<string> { "0.1", "0.01" } }
+                                };
+
+                                if (limits.TryGetValue("Seq1-" + key, out var val))
+                                {
+                                    if (int.TryParse(val[0], out var upperLimit) && int.TryParse(val[1], out var lowerLimit))
+                                    {
+                                        // Check if the target value is within the limits
+                                        if (decimal.Parse(value) >= lowerLimit && decimal.Parse(value) <= upperLimit)
+                                        {
+                                            firstSeqPassed = false;
+                                        }
+                                    }
+                                }
+
                             }
                         }
                         j++;
@@ -717,87 +973,676 @@ namespace FileParserv1
                         testStatus[sn] = testPassed ? "PASS" : "FALSE";
                     }
                 }
-                
+
             }
 
             var headers = seq1Values.Keys.ToList();
-            WriteToCsv(serialNumbers, timeStamps, data, headers,testStatus);
+            WriteToCsv(serialNumbers, timeStamps, data, headers, testStatus, filePath);
         }
 
-        public static void WriteToCsv(List<string> serialNumbers, List<string>  timeStamps, Dictionary<string,List<string>> data, List<string> headers, 
-            Dictionary<string,string> testStatuses)
+
+        static void ProcessPoeNetowrkData(string filePath)
         {
-            var config = new CsvConfiguration(cultureInfo: CultureInfo.InvariantCulture)
+            // Update the path to point to the correct directory for the file.
+
+            var files = ExtractRarFilesToMemory(filePath);
+
+            var serialNumbers = new List<string>();
+            var serialNumbersFromFileText = new List<string>();
+            var allData = new List<Dictionary<string, List<Dictionary<string, string>>>>();
+            var headers = new List<string>();
+            var summaryAllData = new List<Dictionary<string, string>>();
+
+
+            foreach (var (FileName, FileData) in files)
             {
-                Delimiter = ";",
-                HasHeaderRecord = false
+                if (FileData?.Length > 0)
+                {
+                    string snValue = "Not Found";
+                    var summaryData = new List<string>();
+                    var lines = FileData;
+
+                    var sections = SplitIntoMultipleLines(lines);
+
+                    string pattern = @"_report_(\d{2})"; // Match `_report_` followed by 2 digits
+                    var match = Regex.Match(FileName, pattern);
+                    if (match.Success)
+                    {
+                        var sn = match.Groups[1].Value;
+                        serialNumbersFromFileText.Add(sn);
+                    }
+
+
+                    foreach (var line in lines)
+                    {
+                        // Check for SN1# line
+                        if (line.Contains("SN1#:"))
+                        {
+                            int snIndex = line.IndexOf("SN1#:") + 5; // Skip "SN1#: " part
+                            snValue = line[snIndex..].Trim();
+                        }
+                    }
+                    var t = GetSummaryData(FileData);
+                    summaryAllData.Add(t);
+
+                    serialNumbers.Add(snValue);
+                    var taskDetails = GetTaskDetails(lines);
+
+                    var listBySection = new Dictionary<string, List<Dictionary<string, string>>>();
+                    foreach (var sect in sections)
+                    {
+                        var arr = sect.Value.ToArray();
+                        var packetSection = GetPacketSection(arr);
+                        var learningSection = GetLearningSection(arr);
+                        var processDetails = ExtractProcessDetails(arr);
+                        var processTimeSummary = GetProcessTimeSummary(arr);
+                        var finalResult = ExtractFinalResult1(arr);
+                        var streamCounterResults = GetStreamCounterResults(arr);
+
+                        listBySection.Add(sect.Key, new List<Dictionary<string, string>>
+                    {
+                         packetSection, learningSection, processDetails, processTimeSummary, finalResult, streamCounterResults
+                    });
+
+                        if (headers.Count == 0)
+                        {
+                            headers = listBySection.SelectMany(x => x.Value).SelectMany(x => x.Keys).ToList();
+
+                        }
+                    }
+                    allData.Add(listBySection);
+
+                }
+
+            }
+            ConvertToJsonPoE(serialNumbers, allData, headers, summaryAllData, filePath);
+        }
+
+        static Dictionary<string, string> GetSummaryData(string[] lines)
+        {
+
+            string snValue = "Not Found";
+            var summaryData = new Dictionary<string, string>();
+            bool inSummarySection = false;
+
+            var sections = SplitIntoMultipleLines(lines);
+
+            foreach (var line in lines)
+            {
+                // Check for SN1# line
+                if (line.Contains("SN1#:"))
+                {
+                    int snIndex = line.IndexOf("SN1#:") + 5; // Skip "SN1#: " part
+                    snValue = line[snIndex..].Trim();
+                }
+
+                if (line.Contains("===<< SUMMARY >>"))
+                {
+                    inSummarySection = true;
+                    continue;
+                }
+
+                if (inSummarySection && line.StartsWith("----------------------------------------------------------------"))
+                {
+                    inSummarySection = false;
+                    continue;
+                }
+
+                if (inSummarySection && !string.IsNullOrWhiteSpace(line))
+                {
+                    var separatorIndex = line.IndexOf(':');
+                    if (separatorIndex > -1)
+                    {
+                        var key = line[..separatorIndex].Trim();
+                        var value = line[(separatorIndex + 1)..].Trim();
+                        summaryData[key] = value; // Add to dictionary
+                    }
+                }
+
+            }
+            return summaryData;
+
+        }
+        static string[] SplitHeaderLine(string headerLine)
+        {
+            return new[] { "Index", "Task Name", "Start Time", "End Time", "Elapsed Time", "Result" };
+        }
+
+        static Dictionary<string, string> GetProcessTimeSummary(string[] lines)
+        {
+            var processTimeSummary = new Dictionary<string, string>();
+            bool processing = false;
+
+            foreach (var line in lines)
+            {
+                // Start processing after "Process Time Summary:"
+                if (!processing)
+                {
+                    if (line.Trim() == "Process Time Summary:")
+                    {
+                        processing = true;
+                    }
+                    continue;
+                }
+
+                // Skip empty lines or separators
+                if (string.IsNullOrWhiteSpace(line) || line.Contains("---"))
+                    continue;
+
+                if (char.IsDigit(line.TrimStart()[0]))
+                {
+                    // Use Regex to capture the process name and time used
+                    var match = Regex.Match(line, @"^\s*(\d+)\s+([a-zA-Z\s]+)\s+\d{2}:\d{2}:\d{2}\s+\d{2}:\d{2}:\d{2}\s+(\d+)\s*sec");
+
+                    if (match.Success)
+                    {
+                        // Extract the process name and time used
+                        string processItem = match.Groups[1].Value.Trim() + "-" + match.Groups[2].Value.Trim();
+                        string timeUsed = match.Groups[3].Value.Trim() + " sec";
+
+                        // Add the process item and time used to the dictionary
+                        processTimeSummary[processItem] = timeUsed;
+                    }
+                }
+            }
+
+            return processTimeSummary;
+        }
+        static Dictionary<string, string> ExtractProcessDetails(string[] lines)
+        {
+            var processDetails = new Dictionary<string, string>();
+            string currentProcessItem = null;
+
+            bool processing = false;
+
+            foreach (var line in lines)
+            {
+                if (!processing)
+                {
+                    if (line.Trim() == "Process Detail:")
+                    {
+                        processing = true;
+                    }
+                    continue;
+                }
+
+                // Skip empty lines or separators
+                if (string.IsNullOrWhiteSpace(line) || line.Contains("---"))
+                    continue;
+
+                // Check if the line is a process item
+                if (char.IsDigit(line.TrimStart()[0]))
+                {
+                    // Extract the Process Item Name (after the number)
+                    currentProcessItem = line.Substring(line.IndexOf(" ") + 1).Trim();
+                }
+                else if (line.Trim().StartsWith("Test Time"))
+                {
+                    var testTime = line.Split('=').Last().Trim();
+
+                    if (currentProcessItem != null)
+                    {
+                        processDetails[currentProcessItem] = testTime;
+                        currentProcessItem = null;
+                    }
+                }
+            }
+            return processDetails;
+
+        }
+        static Dictionary<string, List<string>> SplitIntoMultipleLines(string[] lines)
+        {
+            string taskPattern = @"Task Name\s+:\s+(.*)";
+
+            var taskSections = new List<List<string>>();
+            var tt = new Dictionary<string, List<string>>();
+
+            string currentTaskName = string.Empty;
+            var currentTaskLines = new List<string>();
+
+            foreach (var line in lines)
+            {
+                var taskMatch = Regex.Match(line, taskPattern);
+                if (taskMatch.Success)
+                {
+                    // If a new Task Name is found and we already have lines for the previous task, store it
+                    if (!string.IsNullOrEmpty(currentTaskName))
+                    {
+                        taskSections.Add(currentTaskLines);
+                        //tt[currentTaskName] = currentTaskLines;
+                        tt.Add(currentTaskName, currentTaskLines);
+                    }
+
+                    // Start a new task
+                    currentTaskName = taskMatch.Groups[1].Value.Trim();
+                    currentTaskLines = new List<string>(); // Reset the lines for the new task
+                }
+
+                currentTaskLines.Add(line);
+            }
+
+            if (currentTaskLines.Count > 0)
+            {
+                taskSections.Add(currentTaskLines);
+                tt.Add(currentTaskName, currentTaskLines);
+            }
+            return tt;
+        }
+
+        static Dictionary<string, string> GetLearningSection(string[] lines)
+        {
+            var keysToExtract = new List<string>
+            {
+                "Learning Count",
+                "Learning Delay",
+                "Learning Gap",
+                "Learning Timeout",
+                "Allowable Tolerance Loss(Per Port)",
+                "Allowable Tolerance Excess(Per Port)",
+                "Minimum Collision"
             };
 
-            using var writer = new StreamWriter("C:\\Users\\GentritSelimi\\Desktop\\adatper-edac1.csv");
-            using var csv = new CsvWriter(writer, config);
-            // Skip to row 3 (as row 1 and 2 are empty)
-            for (int i = 0; i < 3; i++) // Start counting from 0, so skip 2 rows for row 3
+            // Dictionary to store key-value pairs
+            var extractedValues = new Dictionary<string, string>();
+
+            foreach (var line in lines)
             {
-                csv.NextRecord();
-            }
-
-            csv.WriteField("SerialNumber");
-            csv.WriteField("IsPass");
-            csv.WriteField("StartDate");
-
-            foreach (var header in headers)
-            {
-                csv.WriteField(header);
-            }
-            csv.NextRecord();
-
-            // Skip to row 4 for writing serial numbers (no more need for row skips since we're already there)
-            // Write serial numbers starting from column 1 (row 4 onward)
-
-            for (int i = 0; i < serialNumbers.Count; i++)
-            {
-                var sn = serialNumbers[i];
-                var dictData = data[sn];
-                var testStatus = testStatuses[sn];
-                var timeStamp = timeStamps[i];
-
-                csv.WriteField(sn);
-
-                for (int j = 0; j < 2; j++)
+                foreach (var key in keysToExtract)
                 {
-                    if(j == 0)
+                    if (line.StartsWith(key, StringComparison.OrdinalIgnoreCase))
                     {
-                        csv.WriteField(testStatus);
-                    }
-                    if(j == 1)
-                    {
-                        csv.WriteField(timeStamp);
+                        // Extract the value by splitting on the separator ":"
+                        var value = line.Split(new[] { ':' }, 2)
+                                        .LastOrDefault()
+                                        ?.Trim();
+                        if (value != null)
+                        {
+                            extractedValues[key] = value;
+                        }
                     }
                 }
-
-                foreach (var d in dictData)
-                {
-                    csv.WriteField(d);
-                }
-                csv.NextRecord();
             }
 
-            // Now, write dictionary data horizontally starting from row 6, column 4
-            for (int i = 0; i < 2; i++) // Skip 2 more rows to get to row 6
-            {
-                csv.NextRecord();
-            }
-
+            return extractedValues;
         }
-        static string ExtractValue(string line, string key)
+
+        static Dictionary<string, string> GetPacketSection(string[] lines)
         {
-            int startIndex = line.IndexOf(key) + key.Length;
-            if (startIndex >= key.Length)
+            // Define the keys we are looking for
+            var keysToExtract = new List<string>
             {
-                return line.Substring(startIndex).Trim();
+                "Frame Count",
+                "Frame Gap",
+                "Burst Count",
+                "Collision Release Gap",
+                "Tx Timeout",
+                "Wait for Read Counter"
+            };
+
+            // Dictionary to store key-value pairs
+            var extractedValues = new Dictionary<string, string>();
+
+            foreach (var line in lines)
+            {
+                foreach (var key in keysToExtract)
+                {
+                    if (line.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Extract the value by splitting on the separator ":"
+                        var value = line.Split(new[] { ':' }, 2)
+                                        .LastOrDefault()
+                                        ?.Trim();
+                        if (value != null)
+                        {
+                            extractedValues[key] = value;
+                        }
+                    }
+                }
+            }
+
+            return extractedValues;
+        }
+
+        static Dictionary<string, string> ExtractFinalResult1(string[] lines)
+        {
+            var result = new Dictionary<string, string>();
+
+            // Step 1: Extract port identifiers and associated data
+            var ports = new List<string>();
+            var portValues = new List<List<string>>();
+            bool isPortSection = false;
+            var portPattern = @"^\d+\(\d+,\d+,\d+\)$"; // Pattern for valid port (e.g., 1(0,4,1))
+
+            var portHeaders = new[] { "TxPacket", "RxPacket", "TxByte", "RxByte", "X-TAG", "Unicast", "Multicast", "Broadcast", "UnderSize", "OverSize",
+                "Pause","Fragment Err"};
+
+            var vlanHeaders = new[]
+            {
+                "VLAN","IP Checksum Error","Latency CT(us)","Latency SF(us)","Tx Line Rate (Mbps)","IPv4","Packet Loss Rate"
+            };
+
+
+            bool isVlanSection = false;
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("Port", StringComparison.OrdinalIgnoreCase))
+                {
+                    isPortSection = true;
+                    continue;
+                }
+
+                if (isPortSection)
+                {
+                    if (line.StartsWith("====")) // Stop when separator line is reached
+                    {
+                        isPortSection = false;
+                        break;
+                    }
+
+                    var split = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (split.Length > 0 && Regex.IsMatch(split[0], portPattern)) // Validate port pattern
+                    {
+                        ports.Add(split[0]); // Add exact port identifier
+                        portValues.Add(split.Skip(1).ToList()); // Add values for the port
+                    }
+                }
+            }
+
+            //// Step 2: Assign port values to the dictionary
+            //var portHeaders = lines.FirstOrDefault(line => line.StartsWith("Port"))?.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            //if (portHeaders != null)
+            //{
+            //for (int i = 0; i < ports.Count; i++)
+            //{
+            //    for (int j = 0; j < portHeaders.Length; j++)
+            //    {
+            //        result[$"{ports[i]}"] = portValues[i][j];
+            //    }
+            //}
+            //}
+
+            // Step 3: Extract byte data
+            var byteHeaders = new[] { "64Byte", "65-127Byte", "128-255Byte", "256-511Byte", "512-1023Byte" };
+            var byteValues = new List<List<string>>();
+            bool isByteSection = false;
+
+            foreach (var line in lines)
+            {
+                if (line.Trim().StartsWith("64byte", StringComparison.OrdinalIgnoreCase))
+                {
+                    isByteSection = true;
+                    continue;
+                }
+
+                if (isByteSection)
+                {
+                    if (line.StartsWith("====")) // Stop when separator line is reached
+                    {
+                        isByteSection = false;
+                        break;
+                    }
+
+                    var split = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (!split.Any(x => x.StartsWith("-----------+")) && !split.Any(x => x.StartsWith("=============")))
+                    {
+                        byteValues.Add(split.ToList());
+                    }
+                }
+            }
+
+            var vlanValues = new List<List<string>>();
+
+            foreach (var line in lines)
+            {
+                if (line.Trim().StartsWith("VLAN       IP Checksum Error", StringComparison.OrdinalIgnoreCase))
+                {
+                    isVlanSection = true;
+                    continue;
+                }
+
+                if (isVlanSection)
+                {
+                    if (line.StartsWith("====")) // Stop when separator line is reached
+                    {
+                        break;
+                    }
+
+                    var split = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (!split.Any(x => x.StartsWith("-----------+")) && !split.Any(x => x.StartsWith("=============")))
+                    {
+                        vlanValues.Add(split.ToList());
+                    }
+                }
+            }
+
+            // Step 3: Assign byte values to the dictionary
+            for (int i = 0; i < ports.Count; i++)
+            {
+                for (int j = 0; j < portHeaders.Length; j++)
+                {
+                    if (i < portValues.Count && j < portValues[i].Count)
+                    {
+                        result[$"{portHeaders[j]}_{ports[i]}"] = portValues[i][j];
+                    }
+                }
+            }
+
+            // Step 4: Assign byte values to the dictionary
+            for (int i = 0; i < ports.Count; i++)
+            {
+                for (int j = 0; j < byteHeaders.Length; j++)
+                {
+                    if (i < byteValues.Count && j < byteValues[i].Count)
+                    {
+                        result[$"{byteHeaders[j]}_{ports[i]}"] = byteValues[i][j];
+                    }
+                }
+            }
+
+            // Step 5: Assign VLAN values to the dict.
+            for (int i = 0; i < ports.Count; i++)
+            {
+                for (int j = 0; j < vlanHeaders.Length; j++)
+                {
+                    if (i < vlanValues.Count && j < vlanValues[i].Count)
+                    {
+                        result[$"{vlanHeaders[j]}_{ports[i]}"] = vlanValues[i][j];
+                    }
+                }
+            }
+            return result;
+        }
+
+        static Dictionary<string, string> GetStreamCounterResults(string[] lines)
+        {
+            var result = new Dictionary<string, string>();
+
+            // Parse the input
+            //var lines = input.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+
+            var headers = new List<string>
+            {
+                "TxPackets",
+                "RxPackets",
+                "TxBytes",
+                "RxBytes",
+                "RxLostPacket",
+                "RxSNError",
+                "RxIPCsError"
+            };
+
+            var headerLineIndex = Array.FindIndex(lines, line => line.Trim().StartsWith("SPort"));
+            if (headerLineIndex == -1)
+            {
+                Console.WriteLine("Headers not found");
+                return result;
+            }
+
+            var dataRegex = new Regex(@"\((\d+, \d+, \d+)\)|\S+"); // Match (x, y, z) or standalone values
+
+            for (int i = headerLineIndex + 2; i < lines.Length; i++)
+            {
+                var line = lines[i].Trim();
+                if (string.IsNullOrEmpty(line) || line.StartsWith("-----")) break; // Stop at separator or empty line
+
+                var matches = dataRegex.Matches(line).Cast<Match>().Select(m => m.Value).ToList();
+                if (matches.Count < 2 + headers.Count) continue; // Skip invalid rows
+
+                var sPort = matches[0]; // Extract SPort
+                var dPort = matches[1]; // Extract DPort
+                var values = matches.Skip(2).ToArray(); // Remaining values
+
+                // Assign headers and values to the dictionary
+                for (int j = 0; j < headers.Count; j++)
+                {
+                    var key = $"{headers[j]}({sPort})({dPort})";
+                    result[key] = values[j];
+                }
+            }
+
+
+            return result;
+        }
+
+        static List<string> ExtractHeaders(string rawHeaders, string headerDividers)
+        {
+            var headers = new List<string>();
+            var dividerIndices = new List<int>();
+
+            // Identify the start positions of each header using the dividers line
+            for (int i = 0; i < headerDividers.Length; i++)
+            {
+                if (headerDividers[i] == '+')
+                {
+                    dividerIndices.Add(i);
+                }
+            }
+
+            // Extract each header based on the boundaries
+            for (int i = 0; i < dividerIndices.Count - 1; i++)
+            {
+                var start = dividerIndices[i] + 1;
+                var end = dividerIndices[i + 1];
+                var header = rawHeaders.Substring(start, end - start).Trim();
+                headers.Add(header);
+            }
+
+            return headers;
+        }
+        static Dictionary<string, string> ExtractFinalResult(string[] inputData)
+        {
+            // Dictionary to hold results
+            var result = new Dictionary<string, string>();
+            string pattern = @"(\d+)\(\d+,\d+,\d+\)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)";
+
+
+            // Iterate through the input data
+            for (int i = 2; i < inputData.Length; i++) // Skip the first two header lines
+            {
+                var line = inputData[i];
+
+                var match = Regex.Match(line, pattern);
+                if (match.Success)
+                {
+                    // Extract Port number and the values
+                    string port = match.Groups[1].Value;
+                    for (int j = 1; j <= 12; j++)
+                    {
+                        string header = GetHeaderByIndex(j - 1, port);
+                        string value = match.Groups[j].Value;
+                        result[header] = value;
+                    }
+                }
+            }
+            return result;
+        }
+
+        static string GetHeaderByIndex(int index, string port)
+        {
+            string[] headers = { "TxPacket", "RxPacket", "TxByte", "RxByte", "X-TAG", "Unicast", "Multicast", "Broadcast", "UnderSize", "OverSize", "Pause", "Fragment Err" };
+            if (index >= 0 && index <= headers.Length)
+            {
+                return $"{headers[index]}{port}";
             }
             return string.Empty;
         }
 
+        static Dictionary<string, string[]> GetTaskDetails(string[] lines)
+        {
+            // Find the start of the task section
+            var taskSectionStartIndex = Array.FindIndex(lines, line => line.Contains("Index    Task Name"));
+
+            if (taskSectionStartIndex < 0)
+            {
+                Console.WriteLine("Task details section not found.");
+                return new Dictionary<string, string[]>();
+            }
+
+            // Extract headers (preserve original header structure)
+            var headerLine = lines[taskSectionStartIndex];
+            var headers = SplitHeaderLine(headerLine);
+
+            // Extract task details
+            var taskDetails = lines
+                .Skip(taskSectionStartIndex + 2) // Skip headers and separator lines
+                .TakeWhile(line => line.Trim().Length > 0 && !line.StartsWith("=")) // Until empty or separator
+                .Select(line => SplitTaskLine(line, headers)) // Split the line using header positions
+                .ToDictionary(
+                    details => $"Index{details[0]}", // Key: "Index1", "Index2", etc.
+                    details => details.Skip(1).ToArray() // Value: Task details as array (excluding index)
+                );
+
+            // Add headers as the first item in the dictionary
+            var result = new Dictionary<string, string[]>
+            {
+                { "Headers", headers }
+            };
+
+            // Add task details to the dictionary
+            foreach (var kvp in taskDetails)
+            {
+                result[kvp.Key] = kvp.Value;
+            }
+
+            return result;
+        }
+        // Split task line based on header column widths
+        static string[] SplitTaskLine(string taskLine, string[] headers)
+        {
+            return new[]
+            {
+            taskLine.Substring(0, 8).Trim(),               // Index
+            taskLine.Substring(8, 36).Trim(),             // Task Name
+            taskLine.Substring(44, 16).Trim(),            // Start Time
+            taskLine.Substring(61, 16).Trim(),            // End Time
+            taskLine.Substring(78, 16).Trim(),            // Elapsed Time
+            taskLine.Substring(95).Trim()                 // Result
+        };
+        }
+        private static List<(string FileName, string[]? FileData)> ExtractRarFilesToMemory(string rarFilePath)
+        {
+            var extractedFiles = new List<(string FileName, string[]? FileData)>();
+
+
+            using var archive = RarArchive.Open(rarFilePath);
+            if (archive != null && archive.Entries.Count > 0)
+            {
+                foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
+                {
+                    using var memoryStream = new MemoryStream();
+                    entry.WriteTo(memoryStream);
+                    memoryStream.Seek(0, SeekOrigin.Begin);
+
+                    using var reader = new StreamReader(memoryStream);
+
+                    var lines = reader.ReadToEnd().Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+                    extractedFiles.Add((entry.Key, lines));
+                }
+            }
+
+
+            return extractedFiles;
+        }
     }
 }
