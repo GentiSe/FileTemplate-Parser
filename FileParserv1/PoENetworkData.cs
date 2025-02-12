@@ -2,7 +2,7 @@
 public class PowerOverEthernetTask
 {
     public string? SerialNumber { get; set; }
-    public Dictionary<string,string>? SummaryData { get; set; }
+    public Dictionary<string, string>? SummaryData { get; set; }
     public List<NetworkTask> NetworkTasks { get; set; }
     public bool HasPassed { get; set; }
 
@@ -21,6 +21,7 @@ public class PowerOverEthernetTask
 public class NetworkTask
 {
     public string? Name { get; set; }
+    public string? Status { get; set; }
     public List<TaskSection> TaskSections { get; set; }
 
     public NetworkTask()

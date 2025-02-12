@@ -65,6 +65,7 @@ namespace FileParserv1
             , List<string> headers
             , List<Dictionary<string, string>> allSummarysBySn
             , string filePath
+            , List<List<string>> allTaskDetails
             )
         {
             var list = new List<PowerOverEthernetTask>();
@@ -75,7 +76,7 @@ namespace FileParserv1
                 return;
             }
 
-            for (int i = 90; i < serialNumbers.Count; i++)
+            for (int i = 0; i < serialNumbers.Count; i++)
             {
                 var sn = serialNumbers[i];
                 var data = allData[i];
@@ -86,12 +87,21 @@ namespace FileParserv1
                     SummaryData = summaryData,
                     HasPassed = summaryData.ElementAt(5).Value == "Pass",
                 };
+
+                var taskDetails = allTaskDetails[i];
+
+                var index = 0;
                 foreach (var item in data)
                 {
                     var values = item.Value.SelectMany(x => x.Values).ToList();
+
+                    var status = taskDetails[index];
+
+                    index++;
                     var networkTask = new NetworkTask
                     {
-                        Name = item.Key
+                        Name = item.Key,
+                        Status = status
                     };
                     var taskSections = new List<TaskSection>();
                     for (int k = 0; k < headers.Count; k++)
@@ -993,6 +1003,7 @@ namespace FileParserv1
             var headers = new List<string>();
             var summaryAllData = new List<Dictionary<string, string>>();
 
+            var allTaskDetails = new List<List<string>>();
 
             foreach (var (FileName, FileData) in files)
             {
@@ -1028,6 +1039,9 @@ namespace FileParserv1
                     serialNumbers.Add(snValue);
                     var taskDetails = GetTaskDetails(lines);
 
+
+                    allTaskDetails.Add(taskDetails);
+
                     var listBySection = new Dictionary<string, List<Dictionary<string, string>>>();
                     foreach (var sect in sections)
                     {
@@ -1040,9 +1054,9 @@ namespace FileParserv1
                         var streamCounterResults = GetStreamCounterResults(arr);
 
                         listBySection.Add(sect.Key, new List<Dictionary<string, string>>
-                    {
-                         packetSection, learningSection, processDetails, processTimeSummary, finalResult, streamCounterResults
-                    });
+                        {
+                             packetSection, learningSection, processDetails, processTimeSummary, finalResult, streamCounterResults
+                        });
 
                         if (headers.Count == 0)
                         {
@@ -1055,7 +1069,7 @@ namespace FileParserv1
                 }
 
             }
-            ConvertToJsonPoE(serialNumbers, allData, headers, summaryAllData, filePath);
+            ConvertToJsonPoE(serialNumbers, allData, headers, summaryAllData, filePath, allTaskDetails);
         }
 
         static Dictionary<string, string> GetSummaryData(string[] lines)
@@ -1567,7 +1581,7 @@ namespace FileParserv1
             return string.Empty;
         }
 
-        static Dictionary<string, string[]> GetTaskDetails(string[] lines)
+        static List<string> GetTaskDetails(string[] lines)
         {
             // Find the start of the task section
             var taskSectionStartIndex = Array.FindIndex(lines, line => line.Contains("Index    Task Name"));
@@ -1575,7 +1589,7 @@ namespace FileParserv1
             if (taskSectionStartIndex < 0)
             {
                 Console.WriteLine("Task details section not found.");
-                return new Dictionary<string, string[]>();
+                return new List<string>();
             }
 
             // Extract headers (preserve original header structure)
@@ -1592,11 +1606,20 @@ namespace FileParserv1
                     details => details.Skip(1).ToArray() // Value: Task details as array (excluding index)
                 );
 
+            var results1 = new List<string>();
+
+            // take only the Result from Array.
+            foreach (var item in taskDetails)
+            {
+                results1.Add(item.Value[4]);
+            }
+
             // Add headers as the first item in the dictionary
             var result = new Dictionary<string, string[]>
             {
                 { "Headers", headers }
             };
+
 
             // Add task details to the dictionary
             foreach (var kvp in taskDetails)
@@ -1604,21 +1627,22 @@ namespace FileParserv1
                 result[kvp.Key] = kvp.Value;
             }
 
-            return result;
+            return results1;
         }
         // Split task line based on header column widths
         static string[] SplitTaskLine(string taskLine, string[] headers)
         {
             return new[]
             {
-            taskLine.Substring(0, 8).Trim(),               // Index
-            taskLine.Substring(8, 36).Trim(),             // Task Name
-            taskLine.Substring(44, 16).Trim(),            // Start Time
-            taskLine.Substring(61, 16).Trim(),            // End Time
-            taskLine.Substring(78, 16).Trim(),            // Elapsed Time
-            taskLine.Substring(95).Trim()                 // Result
-        };
+                taskLine.Substring(0, 8).Trim(),               // Index
+                taskLine.Substring(8, 36).Trim(),             // Task Name
+                taskLine.Substring(44, 16).Trim(),            // Start Time
+                taskLine.Substring(61, 16).Trim(),            // End Time
+                taskLine.Substring(78, 16).Trim(),            // Elapsed Time
+                taskLine.Substring(95).Trim()                 // Result
+            };
         }
+
         private static List<(string FileName, string[]? FileData)> ExtractRarFilesToMemory(string rarFilePath)
         {
             var extractedFiles = new List<(string FileName, string[]? FileData)>();
