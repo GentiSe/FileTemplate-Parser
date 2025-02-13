@@ -1238,7 +1238,10 @@ namespace FileParserv1
             if (currentTaskLines.Count > 0)
             {
                 taskSections.Add(currentTaskLines);
-                tt.Add(currentTaskName, currentTaskLines);
+                if (!tt.ContainsKey(currentTaskName))
+                {
+                    tt.Add(currentTaskName, currentTaskLines);
+                }
             }
             return tt;
         }
