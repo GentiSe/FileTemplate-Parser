@@ -76,7 +76,7 @@ namespace FileParserv1
                 return;
             }
 
-            for (int i = 0; i < serialNumbers.Count; i++)
+            for (int i = 90; i < serialNumbers.Count; i++)
             {
                 var sn = serialNumbers[i];
                 var data = allData[i];
@@ -106,11 +106,15 @@ namespace FileParserv1
                     var taskSections = new List<TaskSection>();
                     for (int k = 0; k < headers.Count; k++)
                     {
+                        var name = headers[k];
+                        var isDataset = decimal.TryParse(values[k], out var res);
+
                         taskSections.Add(new TaskSection
                         {
-                            Name = headers[k],
+                            Name = name,
                             Value = values[k],
-                            IsDataSet = decimal.TryParse(values[k], out var res)
+                            IsDataSet = isDataset,
+                            NetworkChartType = SetChartTypeBasedOnName(name, isDataset).ToString()
                         });
                     }
                     networkTask.TaskSections = taskSections;
@@ -130,6 +134,47 @@ namespace FileParserv1
             File.WriteAllText(outputFilePath, serialized);
         }
 
+        private static NetworkChartType SetChartTypeBasedOnName(string name, bool isDataset)
+        {
+            if (isDataset)
+            {
+                var txPackets = new List<string> { "TxPacket" };
+                if (txPackets.Any(pattern => Regex.IsMatch(name, $@"^{Regex.Escape(pattern)}", RegexOptions.IgnoreCase)))
+                {
+                    return NetworkChartType.TxPacketsVSRxPackets;
+                }
+
+                var frames = new List<string> { "64Byte_1", "65-127_1", "128-255Byte_1", "256-511Byte_1", "512-1023Byte_1" };
+
+                if (frames.Any(pattern => Regex.IsMatch(name, $@"^{Regex.Escape(pattern)}", RegexOptions.IgnoreCase)))
+                {
+                    return NetworkChartType.FrameSizeDis;
+                }
+
+                var latency = new List<string> { "Latency CT(us)" };
+
+                if (latency.Any(x => Regex.IsMatch(name, $@"^{Regex.Escape(x)}", RegexOptions.IgnoreCase)))
+                {
+                    return NetworkChartType.LatencyPerTest;
+                }
+
+
+                var errorPatterns = new List<string> { "IP Checksum Error", "RxSNError", "RxIPCsError" };
+                if (errorPatterns.Any(pattern => Regex.IsMatch(name, $@"^{Regex.Escape(pattern)}", RegexOptions.IgnoreCase)))
+                {
+                    return NetworkChartType.ErrorCounts;
+                }
+
+
+                var txLineRates = new List<string> { "Tx Line Rate" };
+                if (txLineRates.Any(pattern => Regex.IsMatch(name, $@"^{Regex.Escape(pattern)}", RegexOptions.IgnoreCase)))
+                {
+                    return NetworkChartType.TxLineRateVsTestName;
+                }
+
+            }
+            return NetworkChartType.None;
+        }
 
         public static void WriteToCsv(List<string> serialNumbers
             , List<string> timeStamps
@@ -206,8 +251,9 @@ namespace FileParserv1
             {
                 csv.NextRecord();
             }
-
         }
+
+
         static string ExtractValue(string line, string key)
         {
             int startIndex = line.IndexOf(key) + key.Length;
