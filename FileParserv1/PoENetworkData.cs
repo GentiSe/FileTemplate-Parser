@@ -47,10 +47,3 @@ public enum NetworkChartType
     ErrorCounts,
     None
 }
-
-//Test Duration – Shows how long each test took.
-//Tx Packets vs. Rx Packets – Confirms no packet loss across tests.
-//Frame Size Distribution – Shows the number of packets per frame size range.
-//Latency per Test – Highlights the response time for each test.
-//Tx Line Rate vs. Test Name – Confirms expected network speeds (100M & 1G).
-//Error Counts per Test – No errors detected in this test.
