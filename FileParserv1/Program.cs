@@ -138,7 +138,7 @@ namespace FileParserv1
         {
             if (isDataset)
             {
-                var txPackets = new List<string> { "TxPacket" };
+                var txPackets = new List<string> { "TxPacket", "RxPacket" };
                 if (txPackets.Any(pattern => Regex.IsMatch(name, $@"^{Regex.Escape(pattern)}", RegexOptions.IgnoreCase)))
                 {
                     return NetworkChartType.TxPacketsVSRxPackets;
