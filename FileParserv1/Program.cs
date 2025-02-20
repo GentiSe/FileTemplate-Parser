@@ -1053,7 +1053,7 @@ namespace FileParserv1
 
             foreach (var (FileName, FileData) in files)
             {
-                if (FileData?.Length > 0)
+                if (FileData?.Length > 1 && FileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
                 {
                     string snValue = "Not Found";
                     var summaryData = new List<string>();
