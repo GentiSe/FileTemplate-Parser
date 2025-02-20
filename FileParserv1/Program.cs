@@ -76,7 +76,7 @@ namespace FileParserv1
                 return;
             }
 
-            for (int i = 90; i < serialNumbers.Count; i++)
+            for (int i = serialNumbers.Count; i < serialNumbers.Count; i++)
             {
                 var sn = serialNumbers[i];
                 var data = allData[i];
